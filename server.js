@@ -11,11 +11,14 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/meduhub';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Meduhub:Anything_Password@cluster0.kujgquj.mongodb.net/Meduhub?appName=Cluster0';
 
 mongoose.connect(MONGODB_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
-  .catch((err) => console.error('❌ MongoDB connection error:', err));
+  .catch((err) => {
+    console.error('❌ MongoDB connection error:', err);
+    console.log('⚠️ Server will continue running, but database operations will fail');
+  });
 
 // Registration Schema
 const registrationSchema = new mongoose.Schema({
@@ -86,6 +89,14 @@ app.get('/api/health', (req, res) => {
 // Submit registration
 app.post('/api/register', async (req, res) => {
   try {
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database connection is not ready. Please try again.'
+      });
+    }
+
     const { name, phone, email, state, city, inquiryType } = req.body;
 
     // Validation
@@ -136,19 +147,34 @@ app.post('/api/register', async (req, res) => {
 
   } catch (error) {
     console.error('Registration error:', error);
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
 
     // Handle validation errors
     if (error.name === 'ValidationError') {
       const messages = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({
         success: false,
-        message: messages.join(', ')
+        message: messages.join(', '),
+        errors: error.errors
+      });
+    }
+
+    // Handle MongoDB connection errors
+    if (error.name === 'MongooseError' || error.name === 'MongoError') {
+      return res.status(503).json({
+        success: false,
+        message: 'Database connection error. Please try again later.'
       });
     }
 
     res.status(500).json({
       success: false,
-      message: 'Something went wrong. Please try again later.'
+      message: 'Something went wrong. Please try again later.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
