@@ -14,36 +14,54 @@ app.use(express.json());
 
 // Firebase Admin Initialization
 try {
-  // Try to load service account key from file
-  const serviceAccountPath = path.join(__dirname, 'serviceAccountKey.json');
+  let credential;
   
-  if (fs.existsSync(serviceAccountPath)) {
-    const serviceAccount = require(serviceAccountPath);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      projectId: "meduhub-52922"
-    });
-    console.log('✅ Connected to Firebase with service account');
-  } else {
-    // Fallback: try environment variables
-    if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId: "meduhub-52922",
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-        }),
-        projectId: "meduhub-52922"
-      });
-      console.log('✅ Connected to Firebase with environment variables');
-    } else {
-      console.error('❌ Firebase credentials not found!');
-      console.log('📝 Please download serviceAccountKey.json from Firebase Console');
-      console.log('   Go to: Project Settings > Service Accounts > Generate New Private Key');
-      console.log('   Save the file as serviceAccountKey.json in the project root');
-      process.exit(1);
+  // Priority 1: Check for service account JSON string in environment variable (for deployment)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      credential = admin.credential.cert(serviceAccount);
+      console.log('✅ Using Firebase credentials from FIREBASE_SERVICE_ACCOUNT env variable');
+    } catch (parseError) {
+      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT:', parseError.message);
     }
   }
+  
+  // Priority 2: Check for individual environment variables
+  if (!credential && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_PROJECT_ID) {
+    credential = admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    });
+    console.log('✅ Using Firebase credentials from individual environment variables');
+  }
+  
+  // Priority 3: Check for local service account key file (for development)
+  if (!credential) {
+    const serviceAccountPath = path.join(__dirname, 'serviceAccountKey.json');
+    if (fs.existsSync(serviceAccountPath)) {
+      const serviceAccount = require(serviceAccountPath);
+      credential = admin.credential.cert(serviceAccount);
+      console.log('✅ Connected to Firebase with local service account file');
+    }
+  }
+  
+  // If no credential found, exit
+  if (!credential) {
+    console.error('❌ Firebase credentials not found!');
+    console.log('📝 For local development: Place serviceAccountKey.json in project root');
+    console.log('📝 For deployment: Set FIREBASE_SERVICE_ACCOUNT environment variable');
+    console.log('   Or set: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY');
+    process.exit(1);
+  }
+  
+  // Initialize Firebase Admin
+  admin.initializeApp({
+    credential: credential,
+    projectId: process.env.FIREBASE_PROJECT_ID || "meduhub-52922"
+  });
+  
 } catch (error) {
   console.error('❌ Firebase initialization error:', error.message);
   process.exit(1);
