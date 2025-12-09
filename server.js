@@ -13,7 +13,10 @@ app.use(express.json());
 // MongoDB Connection
 const MONGODB_URI = 'mongodb+srv://Meduhub:Anything_Password@cluster0.kujgquj.mongodb.net/Meduhub?appName=Cluster0';
 
-mongoose.connect(MONGODB_URI)
+mongoose.connect(MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+})
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch((err) => {
     console.error('❌ MongoDB connection error:', err);
