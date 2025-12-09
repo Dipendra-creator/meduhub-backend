@@ -1,0 +1,25 @@
+🔥 NEXT STEPS - Download Firebase Service Account Key
+================================================
+
+Your code is ready! Now you need to get the Firebase credentials:
+
+STEP 1: Go to Firebase Console
+   👉 https://console.firebase.google.com/project/meduhub-52922/settings/serviceaccounts/adminsdk
+
+STEP 2: Click "Generate new private key"
+
+STEP 3: Click "Generate key" in the popup
+
+STEP 4: A JSON file will download - save it as:
+   serviceAccountKey.json
+   
+STEP 5: Move the file to:
+   C:\Users\dipus\Desktop\New folder\meduhub-backend\serviceAccountKey.json
+
+STEP 6: Run the server:
+   node server.js
+
+That's it! Your backend will now use Firebase Firestore instead of MongoDB.
+
+⚠️ IMPORTANT: Do NOT commit serviceAccountKey.json to GitHub!
+(It's already in .gitignore, so you're protected)

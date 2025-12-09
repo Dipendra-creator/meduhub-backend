@@ -1,6 +1,8 @@
 const express = require('express');
-const mongoose = require('mongoose');
+const admin = require('firebase-admin');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -10,73 +12,72 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection
-const MONGODB_URI = 'mongodb+srv://Meduhub:Anything_Password@cluster0.kujgquj.mongodb.net/Meduhub?appName=Cluster0';
-
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 45000,
-})
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch((err) => {
-    console.error('❌ MongoDB connection error:', err);
-    console.log('⚠️ Server will continue running, but database operations will fail');
-  });
-
-// Registration Schema
-const registrationSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Name is required'],
-    trim: true,
-    minlength: [2, 'Name must be at least 2 characters']
-  },
-  phone: {
-    type: String,
-    required: [true, 'Phone number is required'],
-    match: [/^[6-9]\d{9}$/, 'Please enter a valid 10-digit Indian mobile number']
-  },
-  email: {
-    type: String,
-    required: [true, 'Email is required'],
-    trim: true,
-    lowercase: true,
-    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Please enter a valid email address']
-  },
-  state: {
-    type: String,
-    required: [true, 'State is required']
-  },
-  city: {
-    type: String,
-    required: [true, 'City is required']
-  },
-  inquiryType: {
-    type: String,
-    enum: ['register', 'inquiry'],
-    default: 'register'
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  status: {
-    type: String,
-    enum: ['new', 'contacted', 'enrolled', 'closed'],
-    default: 'new'
-  },
-  notes: {
-    type: String,
-    default: ''
+// Firebase Admin Initialization
+try {
+  // Try to load service account key from file
+  const serviceAccountPath = path.join(__dirname, 'serviceAccountKey.json');
+  
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = require(serviceAccountPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      projectId: "meduhub-52922"
+    });
+    console.log('✅ Connected to Firebase with service account');
+  } else {
+    // Fallback: try environment variables
+    if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: "meduhub-52922",
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        }),
+        projectId: "meduhub-52922"
+      });
+      console.log('✅ Connected to Firebase with environment variables');
+    } else {
+      console.error('❌ Firebase credentials not found!');
+      console.log('📝 Please download serviceAccountKey.json from Firebase Console');
+      console.log('   Go to: Project Settings > Service Accounts > Generate New Private Key');
+      console.log('   Save the file as serviceAccountKey.json in the project root');
+      process.exit(1);
+    }
   }
-});
+} catch (error) {
+  console.error('❌ Firebase initialization error:', error.message);
+  process.exit(1);
+}
 
-// Index for faster queries
-registrationSchema.index({ createdAt: -1 });
-registrationSchema.index({ email: 1 });
-registrationSchema.index({ phone: 1 });
+const db = admin.firestore();
+const registrationsCollection = db.collection('registrations');
 
-const Registration = mongoose.model('Registration', registrationSchema, 'Meduhub');
+// Validation helper functions
+const validateRegistration = (data) => {
+  const errors = [];
+  
+  if (!data.name || data.name.trim().length < 2) {
+    errors.push('Name must be at least 2 characters');
+  }
+  
+  if (!data.phone || !/^[6-9]\d{9}$/.test(data.phone)) {
+    errors.push('Please enter a valid 10-digit Indian mobile number');
+  }
+  
+  if (!data.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+    errors.push('Please enter a valid email address');
+  }
+  
+  if (!data.state) {
+    errors.push('State is required');
+  }
+  
+  if (!data.city) {
+    errors.push('City is required');
+  }
+  
+  return errors;
+};
 
 // API Routes
 
@@ -92,26 +93,6 @@ app.get('/api/health', (req, res) => {
 // Submit registration
 app.post('/api/register', async (req, res) => {
   try {
-    // Check MongoDB connection
-    if (mongoose.connection.readyState !== 1) {
-      const conn = mongoose.connection;
-      const readyState = conn.readyState;
-      const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-      const connectionDetails = {
-        readyState: states[readyState] || 'unknown',
-        host: conn.host || 'N/A',
-        port: conn.port || 'N/A',
-        name: conn.name || 'N/A',
-        readyStateCode: readyState
-      };
-      console.log('MongoDB connection details:', connectionDetails);
-      return res.status(503).json({
-        success: false,
-        message: 'Database connection is not ready. Please try again.',
-        connectionDetails
-      });
-    }
-
     const { name, phone, email, state, city, inquiryType } = req.body;
 
     // Validation
@@ -122,14 +103,30 @@ app.post('/api/register', async (req, res) => {
       });
     }
 
+    const validationErrors = validateRegistration(req.body);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: validationErrors.join(', ')
+      });
+    }
+
     // Check for duplicate registration (same phone or email in last 24 hours)
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const existingRegistration = await Registration.findOne({
-      $or: [{ phone }, { email }],
-      createdAt: { $gte: twentyFourHoursAgo }
-    });
+    
+    const phoneQuery = await registrationsCollection
+      .where('phone', '==', phone.trim())
+      .where('createdAt', '>=', twentyFourHoursAgo)
+      .limit(1)
+      .get();
+    
+    const emailQuery = await registrationsCollection
+      .where('email', '==', email.trim().toLowerCase())
+      .where('createdAt', '>=', twentyFourHoursAgo)
+      .limit(1)
+      .get();
 
-    if (existingRegistration) {
+    if (!phoneQuery.empty || !emailQuery.empty) {
       return res.status(409).json({
         success: false,
         message: 'You have already submitted a registration recently. Our team will contact you soon!'
@@ -137,16 +134,19 @@ app.post('/api/register', async (req, res) => {
     }
 
     // Create new registration
-    const registration = new Registration({
+    const registrationData = {
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim().toLowerCase(),
       state,
       city,
-      inquiryType: inquiryType || 'register'
-    });
+      inquiryType: inquiryType || 'register',
+      createdAt: new Date(),
+      status: 'new',
+      notes: ''
+    };
 
-    await registration.save();
+    const docRef = await registrationsCollection.add(registrationData);
 
     console.log(`📝 New ${inquiryType || 'registration'} from ${name} (${email})`);
 
@@ -154,9 +154,9 @@ app.post('/api/register', async (req, res) => {
       success: true,
       message: 'Registration submitted successfully!',
       data: {
-        id: registration._id,
-        name: registration.name,
-        email: registration.email
+        id: docRef.id,
+        name: registrationData.name,
+        email: registrationData.email
       }
     });
 
@@ -167,24 +167,6 @@ app.post('/api/register', async (req, res) => {
       message: error.message,
       stack: error.stack
     });
-
-    // Handle validation errors
-    if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        message: messages.join(', '),
-        errors: error.errors
-      });
-    }
-
-    // Handle MongoDB connection errors
-    if (error.name === 'MongooseError' || error.name === 'MongoError') {
-      return res.status(503).json({
-        success: false,
-        message: 'Database connection error. Please try again later.'
-      });
-    }
 
     res.status(500).json({
       success: false,
@@ -199,20 +181,34 @@ app.get('/api/registrations', async (req, res) => {
   try {
     const { page = 1, limit = 20, status, inquiryType } = req.query;
     
-    const query = {};
-    if (status) query.status = status;
-    if (inquiryType) query.inquiryType = inquiryType;
+    let query = registrationsCollection.orderBy('createdAt', 'desc');
+    
+    if (status) {
+      query = query.where('status', '==', status);
+    }
+    if (inquiryType) {
+      query = query.where('inquiryType', '==', inquiryType);
+    }
 
-    const registrations = await Registration.find(query)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
+    const snapshot = await query.get();
+    
+    const allRegistrations = [];
+    snapshot.forEach(doc => {
+      allRegistrations.push({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate()
+      });
+    });
 
-    const total = await Registration.countDocuments(query);
+    const total = allRegistrations.length;
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedRegistrations = allRegistrations.slice(startIndex, endIndex);
 
     res.json({
       success: true,
-      data: registrations,
+      data: paginatedRegistrations,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -236,22 +232,40 @@ app.patch('/api/registrations/:id', async (req, res) => {
     const { id } = req.params;
     const { status, notes } = req.body;
 
-    const registration = await Registration.findByIdAndUpdate(
-      id,
-      { status, notes },
-      { new: true, runValidators: true }
-    );
+    const validStatuses = ['new', 'contacted', 'enrolled', 'closed'];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status value'
+      });
+    }
 
-    if (!registration) {
+    const docRef = registrationsCollection.doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
       return res.status(404).json({
         success: false,
         message: 'Registration not found'
       });
     }
 
+    const updateData = {};
+    if (status) updateData.status = status;
+    if (notes !== undefined) updateData.notes = notes;
+
+    await docRef.update(updateData);
+
+    const updatedDoc = await docRef.get();
+    const updatedData = {
+      id: updatedDoc.id,
+      ...updatedDoc.data(),
+      createdAt: updatedDoc.data().createdAt?.toDate()
+    };
+
     res.json({
       success: true,
-      data: registration
+      data: updatedData
     });
 
   } catch (error) {
