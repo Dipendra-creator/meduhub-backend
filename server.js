@@ -91,9 +91,21 @@ app.post('/api/register', async (req, res) => {
   try {
     // Check MongoDB connection
     if (mongoose.connection.readyState !== 1) {
+      const conn = mongoose.connection;
+      const readyState = conn.readyState;
+      const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+      const connectionDetails = {
+        readyState: states[readyState] || 'unknown',
+        host: conn.host || 'N/A',
+        port: conn.port || 'N/A',
+        name: conn.name || 'N/A',
+        readyStateCode: readyState
+      };
+      console.log('MongoDB connection details:', connectionDetails);
       return res.status(503).json({
         success: false,
-        message: `Database connection is not ready. Please try again. {status: ${mongoose.connection}`
+        message: 'Database connection is not ready. Please try again.',
+        connectionDetails
       });
     }
 
