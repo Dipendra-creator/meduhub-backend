@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Meduhub:Anything_Password@cluster0.kujgquj.mongodb.net/Meduhub?appName=Cluster0';
+const MONGODB_URI = 'mongodb+srv://Meduhub:Anything_Password@cluster0.kujgquj.mongodb.net/Meduhub?appName=Cluster0';
 
 mongoose.connect(MONGODB_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
@@ -93,7 +93,7 @@ app.post('/api/register', async (req, res) => {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({
         success: false,
-        message: 'Database connection is not ready. Please try again.'
+        message: `Database connection is not ready. Please try again. {status: ${mongoose.connection}`
       });
     }
 
